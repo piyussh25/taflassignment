@@ -1,0 +1,642 @@
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { 
+  Play, 
+  RotateCcw, 
+  Trash2, 
+  Settings, 
+  CheckCircle, 
+  X,
+  XCircle,
+  FastForward,
+  Plus,
+  Book,
+  Maximize2,
+  MousePointer,
+  Square,
+  ChevronLeft,
+  ChevronRight,
+  Pause,
+  Zap,
+  Terminal,
+  Database,
+  Info,
+  ExternalLink,
+  Variable,
+  Activity,
+  Box,
+  Share2,
+  Lightbulb,
+  Search,
+  Code,
+  ShieldCheck
+} from 'lucide-react';
+
+const App = () => {
+  // --- State ---
+  const [automataType, setAutomataType] = useState('DFA');
+  const [states, setStates] = useState([
+    { id: 'q0', x: 250, y: 350, isStart: true, isAccepting: false },
+    { id: 'q1', x: 550, y: 350, isStart: false, isAccepting: true },
+  ]);
+  const [transitions, setTransitions] = useState([
+    { id: 't1', from: 'q0', to: 'q1', symbols: 'a' },
+  ]);
+  
+  const [newTransFrom, setNewTransFrom] = useState('');
+  const [newTransTo, setNewTransTo] = useState('');
+  const [newTransSymbol, setNewTransSymbol] = useState('');
+
+  const [selectedId, setSelectedId] = useState(null);
+  const [draggingState, setDraggingState] = useState(null);
+  const [inputString, setInputString] = useState('abaa');
+  const [showTheory, setShowTheory] = useState(false);
+  
+  // --- Simulation State ---
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentStep, setCurrentStep] = useState(0); 
+  const [simHistory, setSimHistory] = useState([]); 
+  const [simResult, setSimResult] = useState(null);
+  const [activeTransitions, setActiveTransitions] = useState([]); 
+
+  const canvasRef = useRef(null);
+  const playIntervalRef = useRef(null);
+
+  // --- Logic Helpers ---
+  const getEpsilonClosure = useCallback((startIds, trans) => {
+    let closure = new Set(startIds);
+    let stack = [...startIds];
+    while (stack.length > 0) {
+      const id = stack.pop();
+      trans.filter(t => t.from === id && (t.symbols === 'ε' || t.symbols === '' || t.symbols === 'epsilon'))
+           .forEach(t => { if (!closure.has(t.to)) { closure.add(t.to); stack.push(t.to); } });
+    }
+    return Array.from(closure);
+  }, []);
+
+  const addState = () => {
+    const newId = `q${states.length}`;
+    setStates([...states, { id: newId, x: 250 + Math.random() * 50, y: 250 + Math.random() * 50, isStart: false, isAccepting: false }]);
+    setSelectedId(newId);
+  };
+
+  const addTransition = () => {
+    if (!newTransFrom || !newTransTo || !newTransSymbol) return;
+    const newTrans = { id: `t${Date.now()}`, from: newTransFrom, to: newTransTo, symbols: newTransSymbol };
+    setTransitions([...transitions, newTrans]);
+    setNewTransSymbol('');
+  };
+
+  const stopSimulation = useCallback(() => {
+    setIsSimulating(false);
+    setIsPlaying(false);
+    setSimHistory([]);
+    setCurrentStep(0);
+    setSimResult(null);
+    setActiveTransitions([]);
+    if (playIntervalRef.current) clearInterval(playIntervalRef.current);
+  }, []);
+
+  const startSimulation = () => {
+    const start = states.find(s => s.isStart);
+    if (!start) return;
+    const initialClosure = getEpsilonClosure([start.id], transitions);
+    setSimHistory([initialClosure]);
+    setCurrentStep(0);
+    setIsSimulating(true);
+    setSimResult(null);
+    setActiveTransitions([]);
+  };
+
+  const stepForward = useCallback(() => {
+    if (currentStep >= inputString.length) return;
+    const char = inputString[currentStep];
+    const currentActive = simHistory[currentStep];
+    const nextStates = new Set();
+    const firedTransitions = [];
+    
+    currentActive.forEach(id => {
+      transitions.filter(t => t.from === id && t.symbols.split(',').map(s => s.trim()).includes(char))
+                 .forEach(t => {
+                   nextStates.add(t.to);
+                   firedTransitions.push(t.id);
+                 });
+    });
+
+    if (firedTransitions.length > 0) {
+      setActiveTransitions(firedTransitions);
+      setTimeout(() => {
+        const closed = getEpsilonClosure(Array.from(nextStates), transitions);
+        const newHistory = [...simHistory.slice(0, currentStep + 1), closed];
+        setSimHistory(newHistory);
+        setCurrentStep(prev => prev + 1);
+        setActiveTransitions([]);
+        if (currentStep === inputString.length - 1) {
+          const isFinal = closed.some(id => states.find(s => s.id === id)?.isAccepting);
+          setSimResult(isFinal ? 'accepted' : 'rejected');
+          setIsPlaying(false);
+        }
+      }, 600); 
+    } else {
+       setCurrentStep(prev => prev + 1);
+       setSimHistory([...simHistory, []]);
+       setSimResult('rejected');
+       setIsPlaying(false);
+    }
+  }, [currentStep, inputString, simHistory, transitions, getEpsilonClosure, states]);
+
+  const stepBackward = () => {
+    if (currentStep <= 0) return;
+    setCurrentStep(prev => prev - 1);
+    setSimResult(null);
+    setActiveTransitions([]);
+  };
+
+  useEffect(() => {
+    if (isPlaying && !simResult && !activeTransitions.length) {
+      playIntervalRef.current = setInterval(() => {
+        if (currentStep < inputString.length) stepForward();
+        else setIsPlaying(false);
+      }, 1200); 
+    } else {
+      if (playIntervalRef.current) clearInterval(playIntervalRef.current);
+    }
+    return () => { if (playIntervalRef.current) clearInterval(playIntervalRef.current); };
+  }, [isPlaying, currentStep, inputString.length, stepForward, simResult, activeTransitions.length]);
+
+  const handleMouseDown = (e) => {
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const clickedState = states.find(s => Math.hypot(s.x - x, s.y - y) < 30);
+    if (clickedState) {
+      setDraggingState(clickedState.id);
+      setSelectedId(clickedState.id);
+    } else {
+      setSelectedId(null);
+    }
+  };
+
+  const handleMouseMove = (e) => {
+    if (!draggingState) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    setStates(prev => prev.map(s => s.id === draggingState ? { ...s, x, y } : s));
+  };
+
+  const alphabet = Array.from(new Set(transitions.flatMap(t => t.symbols.split(',').map(s => s.trim())))).filter(s => s && s !== 'ε').sort();
+
+  return (
+    <div className="flex h-screen bg-[#06080c] text-zinc-400 font-sans overflow-hidden select-none">
+      {/* Sidebar - Designer Panel */}
+      <aside className="w-80 bg-[#0d121b] border-r border-zinc-800 flex flex-col shadow-2xl z-30">
+        <div className="p-5 border-b border-zinc-800 bg-black/40 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-indigo-500 rounded text-black shadow-[0_0_15px_rgba(99,102,241,0.3)]">
+              <Database size={18} />
+            </div>
+            <h1 className="text-sm font-black tracking-widest text-zinc-100 uppercase">Control Unit</h1>
+          </div>
+          <button 
+            onClick={() => setShowTheory(true)} 
+            className="p-2 hover:bg-indigo-500/10 rounded-md transition-all text-indigo-400 border border-indigo-500/20 hover:border-indigo-500/50 group" 
+            title="Theory Framework"
+          >
+            <Book size={18} className="group-hover:scale-110 transition-transform" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-8 custom-scrollbar">
+          <section className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Settings size={14} className="text-indigo-400" />
+              <h2 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Environment</h2>
+            </div>
+            
+            <div className="space-y-2">
+              <label className="text-[9px] font-bold text-zinc-600 uppercase">Architecture</label>
+              <select 
+                value={automataType}
+                onChange={(e) => setAutomataType(e.target.value)}
+                className="w-full bg-[#151b28] border border-zinc-800 rounded p-2.5 text-xs outline-none focus:border-indigo-500 text-zinc-200 cursor-pointer"
+              >
+                <option value="DFA">Deterministic (DFA)</option>
+                <option value="NFA">Non-Deterministic (NFA)</option>
+              </select>
+            </div>
+
+            <button 
+              onClick={addState}
+              className="w-full flex items-center justify-center gap-2 bg-[#1d2433] hover:bg-indigo-600 border border-zinc-800 hover:border-indigo-500 text-white p-3 rounded text-[10px] font-black transition-all active:scale-95 tracking-widest uppercase shadow-sm"
+            >
+              <Plus size={14} /> New Instance
+            </button>
+          </section>
+
+          <section className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Terminal size={14} className="text-indigo-400" />
+              <h2 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Mapping Logic</h2>
+            </div>
+            <div className="space-y-3 p-4 bg-[#151b28] rounded border border-zinc-800">
+              <div className="flex gap-2">
+                <select 
+                  value={newTransFrom}
+                  onChange={(e) => setNewTransFrom(e.target.value)}
+                  className="flex-1 bg-[#080a0f] border border-zinc-800 rounded p-2 text-[10px] outline-none text-zinc-400"
+                >
+                  <option value="">Source</option>
+                  {states.map(s => <option key={s.id} value={s.id}>{s.id}</option>)}
+                </select>
+                <select 
+                  value={newTransTo}
+                  onChange={(e) => setNewTransTo(e.target.value)}
+                  className="flex-1 bg-[#080a0f] border border-zinc-800 rounded p-2 text-[10px] outline-none text-zinc-400"
+                >
+                  <option value="">Target</option>
+                  {states.map(s => <option key={s.id} value={s.id}>{s.id}</option>)}
+                </select>
+              </div>
+              <div className="relative">
+                <input 
+                  placeholder="Data Signal (e.g. 0, 1)..."
+                  value={newTransSymbol}
+                  onChange={(e) => setNewTransSymbol(e.target.value)}
+                  className="w-full bg-[#080a0f] border border-zinc-800 rounded p-2 text-[10px] outline-none focus:border-indigo-500 pl-8 text-indigo-300"
+                />
+                <Variable size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-600" />
+              </div>
+              <button onClick={addTransition} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white p-2.5 rounded text-[10px] font-black transition-all uppercase tracking-widest">
+                Create Edge
+              </button>
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Maximize2 size={14} className="text-indigo-400" />
+              <h2 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Mathematical Manifest</h2>
+            </div>
+            <div className="p-4 bg-black/40 rounded border border-zinc-800 text-[10px] font-mono text-indigo-400/80 space-y-2">
+              <div className="flex justify-between border-b border-zinc-800/50 pb-1">
+                <span className="text-zinc-600">Alphabet Σ</span> 
+                <span>{`{ ${alphabet.join(', ') || '∅'} }`}</span>
+              </div>
+              <div className="flex justify-between border-b border-zinc-800/50 pb-1">
+                <span className="text-zinc-600">States Q</span> 
+                <span>{`{ ${states.map(s => s.id).join(', ')} }`}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-600">Accepting F</span> 
+                <span>{`{ ${states.filter(s => s.isAccepting).map(s => s.id).join(', ') || '∅'} }`}</span>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        {selectedId && (
+          <div className="p-6 bg-[#151b28] border-t border-zinc-800 animate-in slide-in-from-bottom-5">
+            <div className="flex items-center justify-between mb-5">
+              <div className="flex flex-col">
+                <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest leading-none mb-1">Entity Reference</span>
+                <span className="text-xs font-black text-zinc-100">{selectedId}</span>
+              </div>
+              <button 
+                onClick={() => {
+                  setStates(states.filter(s => s.id !== selectedId));
+                  setTransitions(transitions.filter(t => t.from !== selectedId && t.to !== selectedId));
+                  setSelectedId(null);
+                }}
+                className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-md transition-all"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+            {selectedId.startsWith('q') ? (
+              <div className="grid grid-cols-1 gap-2">
+                <button 
+                  onClick={() => setStates(prev => prev.map(s => s.id === selectedId ? {...s, isStart: !s.isStart} : (s.isStart && s.id !== selectedId ? {...s, isStart: false} : s)))}
+                  className={`w-full flex items-center justify-between p-3 rounded border text-[10px] font-black transition-all ${states.find(s => s.id === selectedId)?.isStart ? 'bg-indigo-500 border-indigo-400 text-black shadow-[0_0_15px_rgba(99,102,241,0.2)]' : 'bg-black border-zinc-800 text-zinc-500 hover:border-zinc-600'}`}
+                >
+                  INITIAL STATE {states.find(s => s.id === selectedId)?.isStart ? <Play size={12} fill="currentColor" /> : null}
+                </button>
+                <button 
+                  onClick={() => setStates(prev => prev.map(s => s.id === selectedId ? {...s, isAccepting: !s.isAccepting} : s))}
+                  className={`w-full flex items-center justify-between p-3 rounded border text-[10px] font-black transition-all ${states.find(s => s.id === selectedId)?.isAccepting ? 'bg-emerald-500 border-emerald-400 text-black shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'bg-black border-zinc-800 text-zinc-500 hover:border-zinc-600'}`}
+                >
+                  FINAL STATE {states.find(s => s.id === selectedId)?.isAccepting ? <CheckCircle size={12} fill="currentColor" /> : null}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <label className="text-[9px] font-bold text-zinc-600 uppercase">Input Sequence</label>
+                <input 
+                  value={transitions.find(t => t.id === selectedId)?.symbols || ''}
+                  onChange={(e) => setTransitions(prev => prev.map(t => t.id === selectedId ? {...t, symbols: e.target.value} : t))}
+                  className="w-full bg-black border border-zinc-800 rounded p-2 text-xs text-indigo-300 outline-none focus:border-indigo-500"
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </aside>
+
+      {/* Main Workspace */}
+      <div className="flex-1 flex flex-col relative bg-[#06080c]">
+        {/* Workspace Toolbar */}
+        <div className="h-20 flex items-center justify-between px-10 bg-[#06080c]/80 backdrop-blur-md border-b border-zinc-800/60 z-20">
+          <div className="flex-1 max-w-lg">
+            <div className="relative">
+              <input 
+                value={inputString}
+                onChange={(e) => setInputString(e.target.value)}
+                placeholder="INPUT DATA STREAM..."
+                className="w-full bg-[#0d121b] border border-zinc-800 rounded px-5 py-3 text-[10px] font-black tracking-[0.2em] text-indigo-400 focus:ring-1 focus:ring-indigo-500/50 outline-none transition-all placeholder:text-zinc-800 uppercase"
+              />
+              <Terminal size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-800" />
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-4">
+            {!isSimulating ? (
+               <button onClick={startSimulation} className="flex items-center gap-3 bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-3 rounded font-black text-[10px] uppercase tracking-widest transition-all shadow-[0_0_20px_rgba(99,102,241,0.2)] active:scale-95">
+                <Zap size={14} fill="currentColor" /> Process Input
+               </button>
+            ) : (
+              <div className="flex items-center gap-3 animate-in fade-in zoom-in duration-300">
+                <div className="flex bg-[#0d121b] border border-zinc-800 p-1.5 rounded shadow-xl">
+                  <button onClick={stepBackward} disabled={currentStep <= 0 || activeTransitions.length > 0} className="p-2 text-zinc-600 hover:text-white disabled:opacity-10 transition-colors">
+                    <ChevronLeft size={20} />
+                  </button>
+                  <div className="w-px bg-zinc-800 mx-1" />
+                  <button onClick={() => setIsPlaying(!isPlaying)} disabled={simResult} className={`p-2 rounded transition-all ${isPlaying ? 'bg-indigo-500 text-black shadow-lg' : 'text-zinc-600 hover:text-white'}`}>
+                    {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+                  </button>
+                  <div className="w-px bg-zinc-800 mx-1" />
+                  <button onClick={stepForward} disabled={currentStep >= inputString.length || simResult || activeTransitions.length > 0} className="p-2 text-zinc-600 hover:text-white disabled:opacity-10 transition-colors">
+                    <ChevronRight size={20} />
+                  </button>
+                </div>
+                <button onClick={stopSimulation} className="bg-rose-500/10 hover:bg-rose-500 text-rose-500 hover:text-white p-3 rounded transition-all border border-rose-500/20 active:scale-90" title="Abort Sequence">
+                  <Square size={14} fill="currentColor" />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Canvas Engine */}
+        <div 
+          ref={canvasRef}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={() => setDraggingState(null)}
+          className="flex-1 relative overflow-hidden bg-[radial-gradient(#151b28_2px,transparent_2px)] [background-size:40px_40px] cursor-default"
+        >
+          <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible">
+            <defs>
+              <marker id="arrow" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <path d="M0 0 L6 2 L0 4 Z" fill="#3f3f46" />
+              </marker>
+              <marker id="arrow-active" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <path d="M0 0 L6 2 L0 4 Z" fill="#6366f1" />
+              </marker>
+              <marker id="arrow-selected" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                <path d="M0 0 L6 2 L0 4 Z" fill="#818cf8" />
+              </marker>
+              <marker id="start-head" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                <path d="M 0 0 L 8 4 L 0 8 Z" fill="#6366f1" />
+              </marker>
+            </defs>
+            
+            {transitions.map(t => {
+              const from = states.find(s => s.id === t.from);
+              const to = states.find(s => s.id === t.to);
+              if (!from || !to) return null;
+
+              const isSelected = selectedId === t.id;
+              const isFired = activeTransitions.includes(t.id);
+
+              if (from.id === to.id) {
+                return (
+                  <g key={t.id} onClick={e => { e.stopPropagation(); setSelectedId(t.id); }} className="pointer-events-auto cursor-pointer">
+                    <path d={`M ${from.x-12} ${from.y-30} A 22 22 0 1 1 ${from.x+12} ${from.y-30}`} fill="none" stroke={isSelected ? '#818cf8' : (isFired ? '#6366f1' : '#27272a')} strokeWidth={isFired ? 4 : 2} markerEnd={isFired ? "url(#arrow-active)" : "url(#arrow)"} />
+                    <text x={from.x} y={from.y-65} textAnchor="middle" className="text-[10px] font-black fill-zinc-600 uppercase tracking-tighter">{t.symbols}</text>
+                    {isFired && (
+                       <circle r="6" fill="#6366f1" className="token-glow">
+                        <animateMotion dur="0.6s" repeatCount="1" path={`M ${from.x-12} ${from.y-30} A 22 22 0 1 1 ${from.x+12} ${from.y-30}`} />
+                       </circle>
+                    )}
+                  </g>
+                );
+              }
+
+              const angle = Math.atan2(to.y - from.y, to.x - from.x);
+              const sx = from.x + Math.cos(angle) * 32;
+              const sy = from.y + Math.sin(angle) * 32;
+              const ex = to.x - Math.cos(angle) * 40;
+              const ey = to.y - Math.sin(angle) * 40;
+              
+              return (
+                <g key={t.id} onClick={e => { e.stopPropagation(); setSelectedId(t.id); }} className="pointer-events-auto cursor-pointer">
+                  <line x1={sx} y1={sy} x2={ex} y2={ey} stroke={isSelected ? '#818cf8' : (isFired ? '#6366f1' : '#27272a')} strokeWidth={isFired ? 4 : 2} markerEnd={isFired ? "url(#arrow-active)" : "url(#arrow)"} />
+                  <text x={(sx+ex)/2} y={(sy+ey)/2 - 8} textAnchor="middle" className="text-[10px] font-black fill-zinc-500 uppercase tracking-tighter">{t.symbols}</text>
+                  {isFired && (
+                    <circle r="6" fill="#6366f1" className="token-glow">
+                      <animateMotion dur="0.6s" repeatCount="1" path={`M ${sx} ${sy} L ${ex} ${ey}`} fill="freeze" />
+                    </circle>
+                  )}
+                </g>
+              );
+            })}
+
+            {/* Start Marker */}
+            {states.filter(s => s.isStart).map(s => (
+              <g key={`start-ind-${s.id}`}>
+                <line x1={s.x - 70} y1={s.y} x2={s.x - 33} y2={s.y} stroke="#6366f1" strokeWidth="2.5" markerEnd="url(#start-head)" />
+                <text x={s.x - 75} y={s.y + 4} textAnchor="end" className="text-[9px] font-black fill-indigo-600 tracking-widest">START</text>
+              </g>
+            ))}
+          </svg>
+
+          {states.map(s => {
+            const isActive = isSimulating && simHistory[currentStep]?.includes(s.id);
+            const isSelected = selectedId === s.id;
+            const isTargeted = activeTransitions.some(tid => transitions.find(t => t.id === tid)?.to === s.id);
+
+            return (
+              <div
+                key={s.id}
+                style={{ left: s.x, top: s.y }}
+                className={`absolute w-16 h-16 -ml-8 -mt-8 rounded-full flex items-center justify-center transition-all duration-300 transform shadow-2xl border-2
+                  ${isActive ? 'scale-110 ring-4 ring-indigo-500/20 bg-indigo-500 border-indigo-400 text-black z-20 shadow-indigo-500/30' : 
+                    isTargeted ? 'bg-[#151b28] border-indigo-500 text-indigo-400 scale-105' : 
+                    'bg-[#0c111d] border-zinc-800 text-zinc-500 hover:border-zinc-700'}
+                  ${isSelected ? 'border-indigo-400 ring-2 ring-indigo-500/10' : ''}
+                `}
+              >
+                {s.isAccepting && (
+                  <div className={`absolute inset-0.5 rounded-full border-2 ${isActive ? 'border-black/50' : 'border-zinc-700'}`} />
+                )}
+                <span className="text-[10px] font-black tracking-widest uppercase">{s.id}</span>
+              </div>
+            );
+          })}
+
+          {simResult && (
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-in zoom-in duration-500 z-50">
+              <div className={`px-12 py-8 rounded border-2 shadow-2xl flex flex-col items-center gap-4 backdrop-blur-xl ${simResult === 'accepted' ? 'bg-emerald-900/40 border-emerald-500 text-emerald-100' : 'bg-rose-900/40 border-rose-500 text-rose-100'}`}>
+                {simResult === 'accepted' ? <CheckCircle size={48} strokeWidth={3} /> : <XCircle size={48} strokeWidth={3} />}
+                <h4 className="font-black uppercase text-4xl tracking-[0.5em]">{simResult}</h4>
+                <p className="text-[9px] font-black opacity-60 tracking-widest">VALIDATION COMPLETE</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Input visualizer bottom panel */}
+        {isSimulating && (
+          <div className="h-28 bg-[#0d121b] border-t border-zinc-800 flex items-center justify-center relative overflow-hidden px-10">
+            <div className="flex gap-4">
+              {inputString.split('').map((char, i) => (
+                <div 
+                  key={i} 
+                  className={`w-14 h-14 rounded flex items-center justify-center font-mono font-black text-2xl transition-all duration-700 border-2 shadow-xl
+                    ${i === currentStep - 1 ? 'bg-indigo-600 border-indigo-400 text-black scale-110 z-10 shadow-indigo-600/30' : 
+                      i < currentStep - 1 ? 'bg-black border-zinc-900 text-zinc-800 scale-90 opacity-30' : 
+                      'bg-[#151b28] border-zinc-800 text-zinc-500'}`}
+                >
+                  {char}
+                </div>
+              ))}
+            </div>
+            <div className="absolute bottom-3 text-[9px] font-black text-zinc-800 uppercase tracking-[0.6em]">Execution Pipeline Throughput</div>
+          </div>
+        )}
+      </div>
+
+      {/* Theory Modal - Academic Perspective */}
+      {showTheory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-10 backdrop-blur-md bg-black/60 animate-in fade-in duration-300">
+          <div className="bg-[#0d121b] border border-zinc-800 w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-lg shadow-2xl flex flex-col custom-scrollbar">
+            <div className="p-6 border-b border-zinc-800 flex justify-between items-center sticky top-0 bg-[#0d121b]/95 backdrop-blur z-20">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-indigo-500 rounded text-black">
+                  <Book size={24} />
+                </div>
+                <div>
+                  <h2 className="text-xl font-black uppercase tracking-widest text-white">Theory of Computation Framework</h2>
+                  <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Formal Logic & Automata Standards</p>
+                </div>
+              </div>
+              <button onClick={() => setShowTheory(false)} className="p-2 hover:bg-zinc-800 rounded-full text-zinc-500 hover:text-white transition-colors">
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="p-10 space-y-12 text-zinc-400 leading-relaxed font-sans text-sm">
+              <section className="space-y-4">
+                <div className="flex items-center gap-3 text-indigo-400 border-b border-zinc-800 pb-2">
+                  <Search size={18} />
+                  <h3 className="font-black uppercase tracking-widest text-base">I. Theoretical Foundations</h3>
+                </div>
+                <p>
+                  Finite Automata (FA) are the simplest model of computation, capable of recognizing <strong>Regular Languages</strong>. Defined extensively by <em>Michael Sipser</em> and <em>Hopcroft & Ullman</em>, they serve as the abstract mathematical representation of systems with finite memory, such as hardware controllers and lexical scanners.
+                </p>
+              </section>
+
+              <section className="space-y-6">
+                <div className="flex items-center gap-3 text-indigo-400 border-b border-zinc-800 pb-2">
+                  <Maximize2 size={18} />
+                  <h3 className="font-black uppercase tracking-widest text-base">II. Formal 5-Tuple Specification</h3>
+                </div>
+                <p>Mathematically, any finite automaton M is defined as a 5-tuple M = (Q, Σ, δ, q₀, F):</p>
+                <div className="grid grid-cols-1 gap-4 pl-4 border-l-2 border-indigo-500/30 py-2">
+                  <div className="bg-black/20 p-4 rounded border border-zinc-800">
+                    <span className="text-zinc-100 font-black mr-2">Q :</span> 
+                    A finite set of states. These encapsulate the machine's "internal memory" or configuration at any point in time.
+                  </div>
+                  <div className="bg-black/20 p-4 rounded border border-zinc-800">
+                    <span className="text-zinc-100 font-black mr-2">Σ :</span> 
+                    The input alphabet. A non-empty, finite set of symbols from which input strings are constructed (e.g., {'Σ = {0, 1}'}).
+                  </div>
+                  <div className="bg-black/20 p-4 rounded border border-zinc-800">
+                    <span className="text-zinc-100 font-black mr-2">δ :</span> 
+                    The transition function. For a DFA, it maps {'Q × Σ → Q'}. For an NFA, it maps {'Q × (Σ ∪ {ε}) → 2ᵠ'}, where 2ᵠ is the power set of states.
+                  </div>
+                  <div className="bg-black/20 p-4 rounded border border-zinc-800">
+                    <span className="text-zinc-100 font-black mr-2">q₀ :</span> 
+                    The unique start state (where {'q₀ ∈ Q'}).
+                  </div>
+                  <div className="bg-black/20 p-4 rounded border border-zinc-800">
+                    <span className="text-zinc-100 font-black mr-2">F :</span> 
+                    The set of final or accepting states (where {'F ⊆ Q'}). If the machine terminates in an accepting state, the string is accepted.
+                  </div>
+                </div>
+              </section>
+
+              <section className="space-y-6">
+                <div className="flex items-center gap-3 text-indigo-400 border-b border-zinc-800 pb-2">
+                  <ShieldCheck size={18} />
+                  <h3 className="font-black uppercase tracking-widest text-base">III. Language Acceptance Criteria</h3>
+                </div>
+                <p>
+                  A string <em>w</em> is accepted by automaton <em>M</em> if there exists a sequence of states <em>r₀, r₁, ..., rₙ</em> such that:
+                </p>
+                <ul className="list-decimal pl-5 space-y-3 text-xs">
+                  <li>Start condition: The sequence begins at the initial state (<em>r₀ = q₀</em>).</li>
+                  <li>Logic condition: Each subsequent state is reached through a valid transition defined by the function δ. In a DFA, <em>rᵢ₊₁ = δ(rᵢ, wᵢ₊₁)</em>.</li>
+                  <li>Terminal condition: The final state reached is member of the accepting set (<em>rₙ ∈ F</em>).</li>
+                </ul>
+              </section>
+
+              <section className="space-y-6">
+                <div className="flex items-center gap-3 text-indigo-400 border-b border-zinc-800 pb-2">
+                  <Activity size={18} />
+                  <h3 className="font-black uppercase tracking-widest text-base">IV. Computational Equivalence</h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="p-5 bg-black/20 rounded border border-zinc-800/50">
+                    <h4 className="font-bold text-zinc-100 mb-2 tracking-widest uppercase text-xs">Deterministic (DFA)</h4>
+                    <p className="text-xs leading-relaxed text-zinc-500">Completely predictable. For every input symbol, there is exactly one destination state. This simplicity leads to efficient implementations in linear time O(n).</p>
+                  </div>
+                  <div className="p-5 bg-black/20 rounded border border-zinc-800/50">
+                    <h4 className="font-bold text-zinc-100 mb-2 tracking-widest uppercase text-xs">Non-Deterministic (NFA)</h4>
+                    <p className="text-xs leading-relaxed text-zinc-500">Allows multiple paths for the same input symbol or ε-transitions. While easier to design, NFAs are often converted to DFAs via <strong>Powerset Construction</strong> for actual computation.</p>
+                  </div>
+                </div>
+                <div className="p-4 bg-indigo-500/5 rounded border border-indigo-500/20 text-indigo-300 text-xs italic flex gap-3">
+                  <Lightbulb className="flex-shrink-0" size={18} />
+                  <span>
+                    <strong>Scientific Fact:</strong> DFAs and NFAs are equivalent in power. Every NFA has a corresponding DFA that recognizes the same language, proving that non-determinism does not increase computational capacity for finite automata.
+                  </span>
+                </div>
+              </section>
+
+              <div className="flex justify-center pt-8 border-t border-zinc-800">
+                <button 
+                  onClick={() => setShowTheory(false)} 
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white px-12 py-4 rounded font-black text-xs uppercase tracking-[0.3em] transition-all active:scale-95 shadow-xl shadow-indigo-900/30 flex items-center gap-3 border border-indigo-400/50"
+                >
+                  Return to Interface <ChevronRight size={14} />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        .token-glow { filter: drop-shadow(0 0 10px rgba(99, 102, 241, 0.8)); }
+        @keyframes pulse-fast { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
+        .token-glow { animation: pulse-fast 0.3s infinite; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1a202c; border-radius: 10px; }
+      `}</style>
+    </div>
+  );
+};
+
+export default App;
